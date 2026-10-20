@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Secrets — NEVER commit
+.env
+.env.*
+!.env.example
+# Service-account / signing material that some setups drop in the repo root.
+*.pem
+*.p12
+*.key
+serviceAccount*.json
+firebase-service-account*.json
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Uploads / local scratch
+tmp/
+uploads/
+coverage/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/

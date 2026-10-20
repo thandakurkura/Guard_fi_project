@@ -1,0 +1,55 @@
+{
+  "name": "guardfi-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "GuardFi — personal & financial safety backend API (Flutter client)",
+  "main": "server.js",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "verify:phase1": "node scripts/verify-phase1.js",
+    "verify:phase2": "node scripts/verify-phase2.js",
+    "verify:phase3": "node scripts/verify-phase3.js",
+    "verify:phase4": "node scripts/verify-phase4.js",
+    "verify:phase5": "node scripts/verify-phase5.js",
+    "verify:phase5:atlas": "node scripts/verify-phase5-atlas.js",
+    "verify:phase6": "node scripts/verify-phase6.js",
+    "verify:phase6:atlas": "node scripts/verify-phase6-atlas.js",
+    "verify:phase7": "node scripts/verify-phase7.js",
+    "verify:phase7:atlas": "node scripts/verify-phase7-atlas.js",
+    "verify:phase8": "node scripts/verify-phase8.js",
+    "verify:phase8:atlas": "node scripts/verify-phase8-atlas.js",
+    "verify:phase9": "node scripts/verify-phase9.js",
+    "verify:phase9:atlas": "node scripts/verify-phase9-atlas.js",
+    "verify:phase10": "node scripts/verify-phase10.js",
+    "verify:account-deletion": "node scripts/verify-account-deletion.js",
+    "seed:demo": "node scripts/seedDemo.js",
+    "seed:flagged": "node scripts/seedFlaggedUpi.js",
+    "diagnose:atlas": "node scripts/diagnose-atlas.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "bcryptjs": "^3.0.3",
+    "cloudinary": "^2.11.0",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.8",
+    "express": "^5.3.0",
+    "express-rate-limit": "^8.7.1",
+    "firebase-admin": "^14.5.0",
+    "helmet": "^8.3.0",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^9.11.2",
+    "multer": "^2.4.0",
+    "node-cache": "^5.1.2",
+    "socket.io": "^4.8.4",
+    "twilio": "^6.2.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "mongodb-memory-server": "^11.3.0",
+    "socket.io-client": "^4.8.4"
+  }
+}

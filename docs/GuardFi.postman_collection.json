@@ -1,0 +1,958 @@
+{
+  "info": {
+    "_postman_id": "b1f0c6d2-9a4e-4f7b-8c31-0d5e7a2b6f44",
+    "name": "GuardFi Backend — Complete API",
+    "description": "Every GuardFi module, in the order a demo should run. Import alongside GuardFi.postman_environment.json, then run folders top to bottom: Auth stores {{jwt_token}}, SOS stores {{alert_id}}, Shield Pay stores {{check_id}}, Scam Buster stores {{scan_id}}. The emergency folder signs its own biometric assertion with crypto-js using {{biometric_secret}}.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{jwt_token}}", "type": "string" }]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Nothing global to prepare; each folder captures what the next one needs."
+        ]
+      }
+    }
+  ],
+  "variable": [
+    { "key": "jwt_token", "value": "" },
+    { "key": "user_id", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "00 · Health",
+      "item": [
+        {
+          "name": "Health check",
+          "auth": { "type": "noauth" },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('API healthy (200)', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('database connected and indexes ready', function () {",
+                  "  pm.expect(body.data.database.connected).to.be.true;",
+                  "  pm.expect(body.data.database.indexesReady).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/health", "host": ["{{base_url}}"], "path": ["health"] }
+          }
+        },
+        {
+          "name": "API index (mounted modules)",
+          "auth": { "type": "noauth" },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('v1 index answers (200)', function () { pm.response.to.have.status(200); });",
+                  "pm.test('every module is mounted', function () {",
+                  "  const modules = pm.response.json().data.mountedModules;",
+                  "  ['auth','nominees','sos','analytics','shield-pay','scam-buster','emergency','config'].forEach(function (name) {",
+                  "    pm.expect(modules).to.include(name);",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/v1", "host": ["{{base_url}}"], "path": ["api", "v1"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "01 · Auth (OTP login)",
+      "item": [
+        {
+          "name": "Send OTP",
+          "auth": { "type": "noauth" },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('OTP issued (200)', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "if (body.data && body.data.otp) {",
+                  "  pm.environment.set('dev_otp', body.data.otp);",
+                  "  console.log('OTP_DEV_MODE is on — captured the code for the next request.');",
+                  "} else {",
+                  "  console.log('OTP was sent by SMS; read it from the phone and paste it into {{dev_otp}}.');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"{{demo_phone}}\"\n}" },
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/send-otp",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "auth", "send-otp"]
+            }
+          }
+        },
+        {
+          "name": "Verify OTP (captures jwt_token)",
+          "auth": { "type": "noauth" },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('signed in (200)', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('a JWT came back', function () { pm.expect(body.data.token).to.be.a('string'); });",
+                  "pm.environment.set('jwt_token', body.data.token);",
+                  "pm.environment.set('user_id', body.data.user._id);",
+                  "pm.collectionVariables.set('jwt_token', body.data.token);",
+                  "pm.collectionVariables.set('user_id', body.data.user._id);",
+                  "console.log('Captured jwt_token and user_id for every later request.');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"{{demo_phone}}\",\n  \"otp\": \"{{dev_otp}}\",\n  \"name\": \"Aarav Sharma\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/verify-otp",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "auth", "verify-otp"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 · Nominees (guardians CRUD)",
+      "item": [
+        {
+          "name": "Add nominee",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('nominee created (201), or already on file (409)', function () {",
+                  "  pm.expect([201, 409]).to.include(pm.response.code);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.nominee) {",
+                  "  pm.environment.set('nominee_id', body.data.nominee.id || body.data.nominee._id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Meera Nair\",\n  \"phone\": \"{{guardian_phone}}\",\n  \"relation\": \"Colleague\",\n  \"isPrimary\": false\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/nominees/add",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "nominees", "add"]
+            }
+          }
+        },
+        {
+          "name": "List nominees",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('list returned (200)', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('a nominee array is present', function () { pm.expect(body.data.nominees).to.be.an('array'); });",
+                  "if (body.data.nominees.length > 0) {",
+                  "  pm.environment.set('nominee_id', body.data.nominees[0]._id || body.data.nominees[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/nominees/list",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "nominees", "list"]
+            }
+          }
+        },
+        {
+          "name": "Update nominee",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('updated (200) or unknown id (400/404)', function () {",
+                  "  pm.expect([200, 400, 404]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"relation\": \"Neighbour\"\n}" },
+            "url": {
+              "raw": "{{base_url}}/api/v1/nominees/{{nominee_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "nominees", "{{nominee_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Remove nominee",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('removed (200) or already gone (400/404)', function () {",
+                  "  pm.expect([200, 400, 404]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/nominees/remove/{{nominee_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "nominees", "remove", "{{nominee_id}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 · SOS",
+      "item": [
+        {
+          "name": "Trigger SOS",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('alert created (201) or joined (200)', function () {",
+                  "  pm.expect([200, 201]).to.include(pm.response.code);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "if (body.data && body.data.alert) {",
+                  "  pm.environment.set('alert_id', body.data.alert.id || body.data.alert._id);",
+                  "  pm.environment.set('alert_room_id', body.data.alert.roomId);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"location\": { \"latitude\": 28.6139, \"longitude\": 77.209, \"accuracy\": 12 },\n  \"message\": \"Demo SOS from the Postman collection\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/sos/trigger",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "sos", "trigger"]
+            }
+          }
+        },
+        {
+          "name": "Active alert",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('active check answered (200)', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sos/active",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "sos", "active"]
+            }
+          }
+        },
+        {
+          "name": "Resolve SOS",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('resolved (200) or nothing active (400/404)', function () {",
+                  "  pm.expect([200, 400, 404]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"FALSE_ALARM\",\n  \"note\": \"Demo complete\"\n}" },
+            "url": {
+              "raw": "{{base_url}}/api/v1/sos/resolve",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "sos", "resolve"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 · Dashboard Analytics",
+      "item": [
+        {
+          "name": "Dashboard",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('dashboard returned (200)', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('readiness score is present', function () { pm.expect(body.data.readiness).to.exist; });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/analytics/dashboard",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "analytics", "dashboard"]
+            }
+          }
+        },
+        {
+          "name": "Dashboard (custom radius and window)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('custom dashboard returned (200)', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/analytics/dashboard?radiusMeters=8000&windowHours=48",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "analytics", "dashboard"],
+              "query": [
+                { "key": "radiusMeters", "value": "8000" },
+                { "key": "windowHours", "value": "48" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 · Shield Pay (UPI fraud)",
+      "item": [
+        {
+          "name": "Check flagged UPI (captures check_id)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('verdict returned (200)', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('the seeded scam handle is DANGER', function () { pm.expect(body.data.riskLevel).to.eql('DANGER'); });",
+                  "pm.test('the warning is bilingual', function () {",
+                  "  pm.expect(body.data.msg_en).to.be.a('string');",
+                  "  pm.expect(body.data.msg_hi).to.match(/[\\u0900-\\u097F]/);",
+                  "});",
+                  "if (body.data.checkId) { pm.environment.set('check_id', body.data.checkId); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"identifier\": \"{{scam_upi}}\"\n}" },
+            "url": {
+              "raw": "{{base_url}}/api/v1/shield-pay/check-upi",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "shield-pay", "check-upi"]
+            }
+          }
+        },
+        {
+          "name": "Check phishing link",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('link verdict returned (200)', function () { pm.response.to.have.status(200); });",
+                  "pm.test('the cloned KYC host is flagged', function () {",
+                  "  pm.expect(pm.response.json().data.riskLevel).to.eql('DANGER');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"identifier\": \"https://{{phish_url}}/login?ref=1\"\n}" },
+            "url": {
+              "raw": "{{base_url}}/api/v1/shield-pay/check-upi",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "shield-pay", "check-upi"]
+            }
+          }
+        },
+        {
+          "name": "Check verified-safe merchant",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('safe verdict returned (200)', function () { pm.response.to.have.status(200); });",
+                  "pm.test('no risk check is opened for a safe payee', function () {",
+                  "  pm.expect(pm.response.json().data.checkId).to.eql(null);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"identifier\": \"{{safe_upi}}\"\n}" },
+            "url": {
+              "raw": "{{base_url}}/api/v1/shield-pay/check-upi",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "shield-pay", "check-upi"]
+            }
+          }
+        },
+        {
+          "name": "Proceed — safe payment",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('payment completed (200)', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "if (body.data && body.data.transactionHash) {",
+                  "  pm.environment.set('transaction_hash', body.data.transactionHash);",
+                  "}",
+                  "pm.test('a transaction hash was issued', function () {",
+                  "  pm.expect(body.data.transactionHash).to.match(/^[0-9a-f]{64}$/);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"identifier\": \"{{safe_upi}}\",\n  \"amount\": 249.5,\n  \"pin\": \"{{demo_pin}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/shield-pay/proceed-transaction",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "shield-pay", "proceed-transaction"]
+            }
+          }
+        },
+        {
+          "name": "Proceed anyway — flagged payee (risk accepted)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('payment completed (200) or check already used (409)', function () {",
+                  "  pm.expect([200, 409]).to.include(pm.response.code);",
+                  "});",
+                  "if (pm.response.code === 200) {",
+                  "  pm.test('the accepted risk is recorded', function () {",
+                  "    pm.expect(pm.response.json().data.risk_accepted).to.be.true;",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"identifier\": \"{{scam_upi}}\",\n  \"amount\": 4999,\n  \"pin\": \"{{demo_pin}}\",\n  \"riskAccepted\": true,\n  \"checkId\": \"{{check_id}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/shield-pay/proceed-transaction",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "shield-pay", "proceed-transaction"]
+            }
+          }
+        },
+        {
+          "name": "Set Shield Pay PIN",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('PIN configured (200) or already set (409)', function () {",
+                  "  pm.expect([200, 409]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"pin\": \"{{demo_pin}}\"\n}" },
+            "url": {
+              "raw": "{{base_url}}/api/v1/shield-pay/set-pin",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "shield-pay", "set-pin"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 · Scam Buster (AI)",
+      "item": [
+        {
+          "name": "Analyse a text message",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('scan stored (201)', function () { pm.response.to.have.status(201); });",
+                  "const body = pm.response.json();",
+                  "pm.test('verdict has both languages', function () {",
+                  "  pm.expect(body.data.explanation_en).to.be.a('string');",
+                  "  pm.expect(body.data.explanation_hi).to.match(/[\\u0900-\\u097F]/);",
+                  "});",
+                  "pm.test('the analysis source is explicit', function () {",
+                  "  pm.expect(['GEMINI', 'HEURISTIC']).to.include(body.data.analysisSource);",
+                  "});",
+                  "pm.environment.set('scan_id', body.data.id || body.data._id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Dear customer, your KYC is expiring today. Pay Rs 499 to this UPI or your account will be blocked: paytm-kyc-help@ybl\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/scam-buster/analyze",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "scam-buster", "analyze"]
+            }
+          }
+        },
+        {
+          "name": "Analyse a screenshot (multipart)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Select a real screenshot in this request's body before running it.",
+                  "pm.test('scan stored (201)', function () { pm.response.to.have.status(201); });",
+                  "const body = pm.response.json();",
+                  "pm.test('the image path was used', function () { pm.expect(body.data.inputType).to.eql('IMAGE'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "text", "value": "Received this WhatsApp forward", "type": "text" },
+                {
+                  "key": "image",
+                  "type": "file",
+                  "src": "/absolute/path/to/a/screenshot.png",
+                  "description": "jpeg/png/webp, up to 5 MB (SCAM_BUSTER_MAX_IMAGE_BYTES)"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/scam-buster/analyze",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "scam-buster", "analyze"]
+            }
+          }
+        },
+        {
+          "name": "Scan history",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('history returned (200)', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('the newest scan is first', function () {",
+                  "  const scans = body.data.scans || body.data;",
+                  "  pm.expect(scans).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/scam-buster/history?limit=10",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "scam-buster", "history"],
+              "query": [{ "key": "limit", "value": "10" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "07 · Emergency (biometric bypass & RBAC)",
+      "item": [
+        {
+          "name": "Emergency status",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status returned (200)', function () { pm.response.to.have.status(200); });",
+                  "pm.test('permissions block is present', function () {",
+                  "  pm.expect(pm.response.json().data.emergencyPermissions).to.exist;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/emergency/status",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "emergency", "status"]
+            }
+          }
+        },
+        {
+          "name": "Biometric verify (signs its own assertion)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Reproduces the Flutter client's signature exactly:",
+                  "//   guardfi-biometric-v1|<userId>|true|<verifiedAtEpochMs>|<nonce>",
+                  "const CryptoJS = require('crypto-js');",
+                  "const secret = pm.environment.get('biometric_secret');",
+                  "const userId = pm.environment.get('user_id') || pm.collectionVariables.get('user_id');",
+                  "if (!secret || secret === 'replace-with-BIOMETRIC_SHARED_SECRET') {",
+                  "  console.log('Set biometric_secret to the server BIOMETRIC_SHARED_SECRET before running this request.');",
+                  "} else {",
+                  "  const verifiedAt = new Date().toISOString();",
+                  "  const nonce = CryptoJS.lib.WordArray.random(18).toString(CryptoJS.enc.Hex);",
+                  "  const canonical = 'guardfi-biometric-v1|' + userId + '|true|' + Date.parse(verifiedAt) + '|' + nonce;",
+                  "  const signature = CryptoJS.HmacSHA256(canonical, secret).toString(CryptoJS.enc.Hex);",
+                  "  pm.environment.set('bio_verified_at', verifiedAt);",
+                  "  pm.environment.set('bio_nonce', nonce);",
+                  "  pm.environment.set('bio_signature', signature);",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('emergency mode unlocked (200/201)', function () {",
+                  "  pm.expect([200, 201]).to.include(pm.response.code);",
+                  "});",
+                  "pm.test('the audit row is referenced', function () {",
+                  "  pm.expect(pm.response.json().data.audit.id).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"success\": true,\n  \"verifiedAt\": \"{{bio_verified_at}}\",\n  \"nonce\": \"{{bio_nonce}}\",\n  \"signature\": \"{{bio_signature}}\",\n  \"deviceMetadata\": {\n    \"deviceId\": \"postman-demo-device\",\n    \"platform\": \"android\",\n    \"appVersion\": \"1.0.0\",\n    \"model\": \"Postman Runner\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/emergency/biometric-verify",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "emergency", "biometric-verify"]
+            }
+          }
+        },
+        {
+          "name": "Restricted action (RBAC-gated)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('permitted (200) or emergency mode is off (403)', function () {",
+                  "  pm.expect([200, 403]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"CONTACT_POLICE\",\n  \"note\": \"Demo: reported the fraud caller\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/emergency/restricted-action",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "emergency", "restricted-action"]
+            }
+          }
+        },
+        {
+          "name": "Lock emergency mode",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('locked (200)', function () { pm.response.to.have.status(200); });",
+                  "pm.test('restricted routes are closed again', function () {",
+                  "  pm.expect(pm.response.json().data.emergencyPermissions.active).to.be.false;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/emergency/lock",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "emergency", "lock"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "08 · Global Config",
+      "item": [
+        {
+          "name": "Get global config (public, cached)",
+          "auth": { "type": "noauth" },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('config returned without a token (200)', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('the response says where it was served from', function () {",
+                  "  pm.expect(['cache', 'database']).to.include(body.data.source);",
+                  "});",
+                  "pm.test('thresholds and helplines are present', function () {",
+                  "  pm.expect(body.data.config.globalWarningThresholds.upiRiskScoreThreshold).to.be.a('number');",
+                  "  pm.expect(body.data.config.emergencyHelplines).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/config/global",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "config", "global"]
+            }
+          }
+        },
+        {
+          "name": "Update global config (admin only)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('admin updated (200) or this account is not an admin (403)', function () {",
+                  "  pm.expect([200, 403]).to.include(pm.response.code);",
+                  "});",
+                  "if (pm.response.code === 200) {",
+                  "  pm.test('the cache was invalidated for the next read', function () {",
+                  "    pm.expect(pm.response.json().data.cacheInvalidated).to.be.true;",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"globalWarningThresholds\": { \"upiRiskScoreThreshold\": 75 },\n  \"maintenanceMode\": false\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/config/global",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "config", "global"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "09 · Account deletion (DESTRUCTIVE — run last)",
+      "item": [
+        {
+          "name": "Delete my account (cascade)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('account deleted (200)', function () { pm.response.to.have.status(200); });",
+                  "const removed = pm.response.json().data.deleted;",
+                  "pm.test('the user row is reported as deleted', function () { pm.expect(removed.user).to.eql(1); });",
+                  "console.log('Removed:', JSON.stringify(removed));",
+                  "pm.environment.unset('jwt_token');",
+                  "pm.collectionVariables.unset('jwt_token');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/account",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "auth", "account"]
+            },
+            "description": "Permanently deletes the signed-in account: Cloudinary screenshots, Nominees, SOS alerts, ScamScans, TransactionAudits, OTPs and the User row. One immutable ACCOUNT_DELETED AuditLog entry survives. The captured jwt_token is cleared afterwards because the account it names no longer exists."
+          }
+        }
+      ]
+    }
+  ]
+}

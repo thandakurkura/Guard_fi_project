@@ -1,0 +1,101 @@
+# GuardFi backend — Render blueprint (Infrastructure as Code)
+#
+# Deploy: Render Dashboard → New → Blueprint → pick this repository.
+# Render reads this file and asks for the `sync: false` values (the real secrets).
+#
+# Three deployment facts this file encodes, each one a bug if left to defaults:
+#
+#   1. NODE_ENV=production. That is what flips the production guards in
+#      config/env.js (OTP_DEV_MODE can no longer leak codes, logs get the secret
+#      redaction path, health stops disclosing the cluster hostname).
+#   2. TRUST_PROXY=1. Render terminates TLS and forwards the real client address
+#      in X-Forwarded-For, OVERWRITING whatever a client sent. Without this,
+#      req.ip is Render's proxy, one per-IP bucket is shared by all users, and
+#      AuditLog would record the proxy address instead of the caller's.
+#   3. healthCheckPath: /health. The endpoint answers 503 until the database is
+#      reachable AND its indexes are built, so Render only routes traffic to a
+#      deployment that is genuinely safe to write to.
+#
+# WebSockets need no extra setting on Render: Socket.io upgrades the same HTTP
+# port, and the service already listens on process.env.PORT.
+
+services:
+  - type: web
+    name: guardfi-backend
+    runtime: node
+    plan: free
+    region: singapore
+    branch: main
+    buildCommand: npm ci --omit=dev
+    startCommand: node server.js
+    healthCheckPath: /health
+    autoDeploy: true
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      # Exactly one proxy hop: Render's load balancer. See fact 2 above.
+      - key: TRUST_PROXY
+        value: "1"
+
+      # Comma-separated allow-list. Replace with the real origins before launch;
+      # the wildcard disables credentialed CORS and is only a temporary demo value.
+      - key: CORS_ORIGINS
+        value: "*"
+
+      # --- secrets / per-environment values (set in the dashboard) -----------
+      - key: MONGO_URI
+        sync: false
+      - key: MONGO_DB_NAME
+        value: guardfi
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 7d
+
+      # Keep false in production: true would return live OTPs in HTTP responses.
+      - key: OTP_DEV_MODE
+        value: "false"
+
+      # Phase 7 — leave empty to run the deterministic offline heuristic screen
+      # instead of failing scans.
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: SCAM_BUSTER_STORAGE_MODE
+        value: auto
+
+      # Phase 8 — the HMAC key provisioned inside the Flutter build. Generate
+      # with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+      - key: BIOMETRIC_SHARED_SECRET
+        sync: false
+
+      # Phase 4 — optional push. Leave unset to fall back to SMS.
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: FIREBASE_CLIENT_EMAIL
+        sync: false
+      - key: FIREBASE_PRIVATE_KEY
+        sync: false
+
+      # Phase 4/2 — SMS delivery for real OTPs. Without these and with
+      # OTP_DEV_MODE=false, /send-otp answers 503 instead of lying about a code.
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_PHONE_NUMBER
+        sync: false
+      - key: FAST2SMS_API_KEY
+        sync: false
+      - key: SMS_PROVIDER
+        value: auto
