@@ -263,6 +263,10 @@ async function runHttpChecks() {
       ['/api/v1/shield-pay/proceed-transaction', { identifier: SAFE_UPI, pin: PIN }],
       ['/api/v1/shield-pay/proceed-transaction', { identifier: SAFE_UPI, amount: 0, pin: PIN }],
       ['/api/v1/shield-pay/proceed-transaction', { identifier: SAFE_UPI, amount: -5, pin: PIN }],
+      // Sub-paisa values round to zero; storing them would record a ₹0 payment.
+      ['/api/v1/shield-pay/proceed-transaction', { identifier: SAFE_UPI, amount: 0.001, pin: PIN }],
+      ['/api/v1/shield-pay/proceed-transaction', { identifier: SAFE_UPI, amount: 0.004, pin: PIN }],
+      ['/api/v1/shield-pay/proceed-transaction', { identifier: SAFE_UPI, amount: '0.001', pin: PIN }],
       ['/api/v1/shield-pay/proceed-transaction', { identifier: SAFE_UPI, amount: 200001, pin: PIN }],
       ['/api/v1/shield-pay/proceed-transaction', { identifier: SAFE_UPI, amount: 100, pin: '12' }],
       ['/api/v1/shield-pay/proceed-transaction', { identifier: SAFE_UPI, amount: 100, pin: 4821 }],

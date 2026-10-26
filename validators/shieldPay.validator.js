@@ -95,7 +95,17 @@ const amountField = z.any().transform((value, ctx) => {
     return 0;
   }
 
-  return Math.round(parsed * 100) / 100;
+  // Round to paise BEFORE the final check. A positive input smaller than half a
+  // paisa (0.001) used to round to 0 and be stored as a completed ₹0 payment —
+  // a receipt that claims a transaction which cannot exist.
+  const rounded = Math.round(parsed * 100) / 100;
+
+  if (rounded < 0.01) {
+    ctx.addIssue({ code: 'custom', message: 'amount must be at least 0.01' });
+    return 0;
+  }
+
+  return rounded;
 });
 
 /** 4-6 digit PIN, as a string. */

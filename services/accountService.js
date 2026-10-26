@@ -37,13 +37,46 @@ const SosAlert = require('../models/SosAlert');
 const ScamScan = require('../models/ScamScan');
 const TransactionAudit = require('../models/TransactionAudit');
 const Otp = require('../models/Otp');
+const fs = require('node:fs/promises');
 const SendThrottle = require('../models/SendThrottle');
 const AuditLog = require('../models/AuditLog');
 const cloudinaryService = require('./cloudinaryService');
+const scamStorageService = require('./scamStorageService');
 const logger = require('../utils/logger');
 
 /** `destroyImages` opens at most this many Cloudinary requests at once. */
 const DESTROY_CONCURRENCY = 5;
+
+/**
+ * Remove screenshots that live on this server's disk (the Cloudinary-less
+ * fallback). A file that is already gone counts as deleted: the end state the
+ * user asked for has been reached, and failing the account deletion over a
+ * vanished temp file would be absurd.
+ *
+ * @param {string[]} filePaths
+ * @returns {Promise<{ requested: number, deleted: number, failed: number, missing: number }>}
+ */
+async function deleteLocalScreenshots(filePaths) {
+  const summary = { requested: filePaths.length, deleted: 0, failed: 0, missing: 0 };
+
+  for (const filePath of filePaths) {
+    try {
+      await fs.unlink(filePath);
+      summary.deleted += 1;
+    } catch (error) {
+      if (error && error.code === 'ENOENT') {
+        summary.deleted += 1;
+        summary.missing += 1;
+        continue;
+      }
+
+      summary.failed += 1;
+      logger.warn(`[account] Local screenshot ${filePath} could not be removed: ${error.message}`);
+    }
+  }
+
+  return summary;
+}
 
 /**
  * @param {{ userId: string, phone: string, request?: { ipAddress?: string|null, userAgent?: string|null },
@@ -53,11 +86,23 @@ async function deleteAccount({ userId, phone, request = {}, deps = {} }) {
   const destroyImages = deps.destroyImages || cloudinaryService.destroyImages;
 
   // --- 1. read the asset handles before their rows disappear -----------------
-  const scans = await ScamScan.find({ userId, cloudinaryPublicId: { $ne: null } })
-    .select('cloudinaryPublicId')
+  const scans = await ScamScan.find({
+    userId,
+    $or: [
+      { cloudinaryPublicId: { $ne: null } },
+      { imageUrl: { $regex: `^${scamStorageService.LOCAL_URI_PREFIX}` } },
+    ],
+  })
+    .select('cloudinaryPublicId imageUrl')
     .lean();
 
   const publicIds = scans.map((scan) => scan.cloudinaryPublicId).filter(Boolean);
+
+  // `local://scam-scans/<file>` rows point at files this server wrote when no
+  // Cloudinary bucket was configured. Deleting the row alone would leave the
+  // victim's screenshot readable on disk forever, which is exactly what a
+  // "delete my account" request must not do.
+  const localPaths = [...new Set(scans.map((scan) => scamStorageService.resolveLocalPath(scan.imageUrl)).filter(Boolean))];
 
   // --- 2. destroy the assets, never fatally ----------------------------------
   // `destroyImages` already converts every per-asset failure into a report
@@ -88,6 +133,14 @@ async function deleteAccount({ userId, phone, request = {}, deps = {} }) {
   if (cloudinary.failed > 0) {
     logger.warn(
       `[account] ${cloudinary.failed}/${cloudinary.requested} screenshot(s) could not be destroyed for user ${userId}; the account deletion proceeds.`
+    );
+  }
+
+  const localScreenshots = await deleteLocalScreenshots(localPaths);
+
+  if (localScreenshots.failed > 0) {
+    logger.warn(
+      `[account] ${localScreenshots.failed}/${localScreenshots.requested} local screenshot(s) could not be removed for user ${userId}; the account deletion proceeds.`
     );
   }
 
@@ -145,7 +198,7 @@ async function deleteAccount({ userId, phone, request = {}, deps = {} }) {
     details: {
       requestedAction: 'DELETE_ACCOUNT',
       reason: 'USER_REQUESTED',
-      note: `nominees=${deleted.nominees} alerts=${deleted.sosAlerts} scans=${deleted.scamScans} transactions=${deleted.transactionAudits} otps=${deleted.otps} screenshots=${cloudinary.destroyed}/${cloudinary.requested}`.slice(
+      note: `nominees=${deleted.nominees} alerts=${deleted.sosAlerts} scans=${deleted.scamScans} transactions=${deleted.transactionAudits} otps=${deleted.otps} screenshots=${cloudinary.destroyed}/${cloudinary.requested} local=${localScreenshots.deleted}/${localScreenshots.requested}`.slice(
         0,
         280
       ),
@@ -153,12 +206,13 @@ async function deleteAccount({ userId, phone, request = {}, deps = {} }) {
   });
 
   logger.info(
-    `[account] Deleted user ${userId}: ${deleted.nominees} nominees, ${deleted.sosAlerts} alerts, ${deleted.scamScans} scans, ${deleted.transactionAudits} transactions, ${cloudinary.destroyed}/${cloudinary.requested} screenshots.`
+    `[account] Deleted user ${userId}: ${deleted.nominees} nominees, ${deleted.sosAlerts} alerts, ${deleted.scamScans} scans, ${deleted.transactionAudits} transactions, ${cloudinary.destroyed}/${cloudinary.requested} screenshots, ${localScreenshots.deleted}/${localScreenshots.requested} local files.`
   );
 
   return {
     deleted,
     cloudinary,
+    localScreenshots,
     sockets,
     audit: {
       id: String(audit._id),

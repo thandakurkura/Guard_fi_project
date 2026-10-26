@@ -308,7 +308,9 @@ class GuardFiSosSocket {
     final socket = IO.io(
       _baseUrl,
       IO.OptionBuilder()
-          .setTransports(<String>['websocket', 'polling'])
+          // WebSocket only: on Android/iOS the Dart VM cannot use the XHR
+          // polling transport, so allowing it just adds a failing fallback.
+          .setTransports(<String>['websocket'])
           .setAuth(<String, dynamic>{'token': _token})
           .enableReconnection()
           .setReconnectionDelay(1000)
@@ -632,7 +634,8 @@ class GuardFiSosSocket {
       final result = SosJoinResult.fromJson(ack);
       _activeAlertId = result.alertId;
       _activeRoomId = result.roomId;
-      if (!_disposed) _joinedController.add(result);
+      // The server emits `sos_joined` for this join as well, so the stream is
+      // fed by the event handler — adding here would duplicate every re-join.
     } catch (error) {
       if (_disposed) return;
       _errorsController.add(

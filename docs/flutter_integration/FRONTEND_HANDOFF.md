@@ -176,7 +176,6 @@ digits.
       "isEmergencyMode": false,
       "biometricEnabled": false,
       "emergencyActivatedAt": null,
-      "lastKnownLocation": { "type": "Point", "coordinates": [77.209, 28.6139] },
       "lastLoginAt": "2026-10-21T09:12:44.001Z",
       "createdAt": "2026-10-01T08:00:00.000Z",
       "updatedAt": "2026-10-21T09:12:44.001Z"
@@ -212,6 +211,7 @@ confirmation ("DELETE"), then:
       "transactionAudits": 3, "otps": 1, "sendThrottles": 1
     },
     "cloudinary": { "requested": 5, "destroyed": 5, "failed": 0, "results": [] },
+    "localScreenshots": { "requested": 1, "deleted": 1, "failed": 0, "missing": 0 },
     "sockets": { "alertsClosed": 1, "roomsEmptied": 1, "socketsDisconnected": 2 },
     "audit": { "id": "665f…", "action": "ACCOUNT_DELETED", "createdAt": "…" }
   },
@@ -222,6 +222,11 @@ confirmation ("DELETE"), then:
 After success the token is worthless (every request re-reads the user row).
 Clear local storage and any cached images. A failed Cloudinary destroy does
 **not** fail the request — `cloudinary.failed > 0` is informational.
+
+`localScreenshots` covers screenshots the server stored on its own disk (the
+no-Cloudinary fallback, `imageStorage: "LOCAL"`). Those files are unlinked as
+part of the cascade; `missing` counts files that were already gone (still a
+success), and `failed > 0` is likewise informational.
 
 ---
 
@@ -484,6 +489,11 @@ When the user has no location on file, `nearby` is
 `{ "available": false, "radiusMeters": 5000, "count": 0, "byStatus": {…}, "reason": "no_location_on_file" }`.
 Nearby is **counts only** — no ids, no coordinates of other people.
 
+> **Heads-up:** no public endpoint currently writes `User.lastKnownLocation`
+> (only the demo seed script does). Until one is added, `nearby.available` and
+> `meta.userLocationAvailable` are `false` for real accounts — design the card to
+> show the "enable location sharing" empty state rather than an empty map.
+
 ---
 
 ## 7. Shield Pay
@@ -702,6 +712,7 @@ guardfi-biometric-v1|<userId>|true|<verifiedAt epoch ms>|<nonce>
 
 ```dart
 import 'dart:convert';
+import 'dart:math';
 import 'package:crypto/crypto.dart';
 
 final verifiedAt = DateTime.now().toUtc();
@@ -975,8 +986,9 @@ retry.
 
 ### 12.4 Flow — guardian
 
-The guardian gets the SMS with the 12-char room code, or `sos:created` on their
-own socket if the app is open:
+The guardian gets the 12-char room code from the SMS fallback or from the push
+payload (`data.roomId`). `sos:created` is broadcast only to the **owner's**
+personal room (their other devices), so a guardian must not wait for it:
 
 ```dart
 final roomId = 'aB3dE9fG7hJk';

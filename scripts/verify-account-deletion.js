@@ -9,6 +9,8 @@
  *   • every ScamScan cloudinaryPublicId for the caller is destroyed through the
  *     Cloudinary transport (injected destroyer + a real unconfigured-server run),
  *     and a destroyer that throws still cannot block the deletion;
+ *   • screenshots the local fallback wrote to disk are unlinked — and only the
+ *     caller's files, never a bystander's;
  *   • live Socket.io sessions are closed: the caller's socket is told the account
  *     is gone and is disconnected;
  *   • the cascade empties User, Nominee, SosAlert, ScamScan, TransactionAudit,
@@ -39,6 +41,16 @@ process.env.CLOUDINARY_CLOUD_NAME = '';
 process.env.CLOUDINARY_API_KEY = '';
 process.env.CLOUDINARY_API_SECRET = '';
 process.env.SCAM_BUSTER_STORAGE_MODE = 'auto';
+// A private scratch directory for the local-screenshot half of the deletion: the
+// fallback writes here whenever Cloudinary is unavailable, and the cascade must
+// unlink the file as well as the row. Absolute so the spawned server and this
+// harness agree on the location.
+process.env.SCAM_BUSTER_LOCAL_STORAGE_DIR = require('node:path').join(
+  __dirname,
+  '..',
+  'uploads',
+  '__account-deletion-probe__'
+);
 
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
@@ -47,6 +59,8 @@ const { spawn } = require('node:child_process');
 const mongoose = require('mongoose');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..');
+const PROBE_STORAGE_DIR = process.env.SCAM_BUSTER_LOCAL_STORAGE_DIR;
+const LOCAL_FILES = { victim: 'probe.png', bystander: 'bystander.png' };
 const PORT = Number(process.env.VERIFY_ACCOUNT_PORT || 4349);
 const BASE = `http://127.0.0.1:${PORT}`;
 const USER_AGENT = 'GuardFi-Account-Deletion/1.0';
@@ -163,6 +177,7 @@ async function seedDataset() {
   const TransactionAudit = require('../models/TransactionAudit');
   const Otp = require('../models/Otp');
   const SendThrottle = require('../models/SendThrottle');
+  const fs = require('node:fs/promises');
   const { signAccessToken } = require('../services/tokenService');
 
   await Promise.all([User.init(), Nominee.init(), SosAlert.init(), ScamScan.init(), TransactionAudit.init()]);
@@ -232,10 +247,10 @@ async function seedDataset() {
     },
   ]);
 
-  const makeScan = (userId, publicId, index) => ({
+  const makeScan = (userId, publicId, index, localName = LOCAL_FILES.victim) => ({
     userId,
     inputType: 'IMAGE',
-    imageUrl: publicId ? `https://res.cloudinary.com/demo/${publicId}.png` : 'local://scam-scans/probe.png',
+    imageUrl: publicId ? `https://res.cloudinary.com/demo/${publicId}.png` : `local://scam-scans/${localName}`,
     cloudinaryPublicId: publicId,
     imageStorage: publicId ? 'CLOUDINARY' : 'LOCAL',
     extractedText: 'probe screenshot',
@@ -249,11 +264,18 @@ async function seedDataset() {
     updatedAt: now,
   });
 
+  // The local-fallback rows are only honest if the files actually exist: write
+  // them, so the cascade test can prove the bytes are gone, not just the row.
+  await fs.mkdir(PROBE_STORAGE_DIR, { recursive: true });
+  await fs.writeFile(path.join(PROBE_STORAGE_DIR, LOCAL_FILES.victim), Buffer.from('victim-screenshot-bytes'));
+  await fs.writeFile(path.join(PROBE_STORAGE_DIR, LOCAL_FILES.bystander), Buffer.from('bystander-screenshot-bytes'));
+
   await ScamScan.collection.insertMany([
     makeScan(victim._id, 'guardfi/victim-scan-1', 1),
     makeScan(victim._id, 'guardfi/victim-scan-2', 2),
     makeScan(victim._id, null, 3),
     makeScan(bystander._id, 'guardfi/bystander-scan-1', 4),
+    makeScan(bystander._id, null, 5, LOCAL_FILES.bystander),
   ]);
 
   const makeAudit = (userId) => ({
@@ -292,6 +314,7 @@ async function seedDataset() {
   seeded.serviceProbe = { id: String(serviceProbe._id), objectId: serviceProbe._id, phone: serviceProbe.phone };
   seeded.alertId = String(victimActiveAlert._id);
   seeded.roomId = victimActiveAlert.roomId;
+  seeded.localFiles = { ...LOCAL_FILES };
 }
 
 async function countsFor(userId, phone) {
@@ -386,9 +409,27 @@ async function runHttpChecks() {
       JSON.stringify(deletion.cloudinary.results)
     );
 
+    assert.equal(deletion.localScreenshots.requested, 1, JSON.stringify(deletion.localScreenshots));
+    assert.equal(deletion.localScreenshots.deleted, 1);
+    assert.equal(deletion.localScreenshots.failed, 0);
+
     assert.equal(deletion.sockets.alertsClosed, 1);
     assert.equal(deletion.sockets.socketsDisconnected, 1, JSON.stringify(deletion.sockets));
     assert.equal(deletion.audit.action, 'ACCOUNT_DELETED');
+  });
+
+  await record('cascade: the local screenshot file is unlinked, and a bystander file survives', async () => {
+    const fs = require('node:fs/promises');
+    const victimFile = path.join(PROBE_STORAGE_DIR, LOCAL_FILES.victim);
+    const bystanderFile = path.join(PROBE_STORAGE_DIR, LOCAL_FILES.bystander);
+
+    const victimGone = await fs.access(victimFile).then(
+      () => false,
+      () => true
+    );
+    assert.equal(victimGone, true, `the victim screenshot is still on disk: ${victimFile}`);
+
+    await fs.access(bystanderFile);
   });
 
   await record('socket: the deleted account is disconnected from its SOS room', async () => {
@@ -416,7 +457,7 @@ async function runHttpChecks() {
     const User = require('../models/User');
     const bystanderCounts = await countsFor(bystander.objectId, bystander.phone);
 
-    assert.deepEqual(bystanderCounts, { nominees: 1, alerts: 1, scans: 1, transactions: 1, otps: 1, throttles: 1 });
+    assert.deepEqual(bystanderCounts, { nominees: 1, alerts: 1, scans: 2, transactions: 1, otps: 1, throttles: 1 });
     assert.equal(await User.countDocuments({ _id: bystander.objectId }), 1);
   });
 
@@ -433,6 +474,7 @@ async function runHttpChecks() {
     assert.equal(row.details.reason, 'USER_REQUESTED');
     assert.match(row.details.note, /nominees=2/);
     assert.match(row.details.note, /screenshots=0\/2/);
+    assert.match(row.details.note, /local=1\/1/);
 
     await assert.rejects(
       () => AuditLog.updateOne({ _id: row._id }, { $set: { action: 'EMERGENCY_MODE_LOCKED' } }),
@@ -826,6 +868,9 @@ async function main() {
       if (key === 'users') continue;
       assert.equal(value, 0, `${key} left probe data behind`);
     }
+
+    const fs = require('node:fs/promises');
+    await fs.rm(PROBE_STORAGE_DIR, { recursive: true, force: true });
   });
 
   const passed = results.filter((result) => result.ok).length;

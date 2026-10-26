@@ -859,8 +859,9 @@ class GuardFiApiClient {
     this.requestTimeout = const Duration(seconds: 20),
   })  : _baseUrl = _normaliseBaseUrl(baseUrl),
         _http = httpClient ?? http.Client(),
-        _ownsHttpClient = httpClient == null,
-        _accessToken = accessToken;
+        _ownsHttpClient = httpClient == null {
+    _accessToken = accessToken;
+  }
 
   final String _baseUrl;
   final http.Client _http;
@@ -900,7 +901,10 @@ class GuardFiApiClient {
 
   Uri _uri(String path, [Map<String, String>? query]) {
     final suffix = path.startsWith('/') ? path : '/$path';
-    final uri = Uri.parse('$_baseUrl$apiPrefix$suffix');
+    final prefix = apiPrefix.isEmpty
+        ? ''
+        : (apiPrefix.startsWith('/') ? apiPrefix : '/$apiPrefix');
+    final uri = Uri.parse('$_baseUrl$prefix$suffix');
     if (query == null || query.isEmpty) return uri;
     return uri.replace(queryParameters: <String, String>{...uri.queryParameters, ...query});
   }
@@ -1062,7 +1066,8 @@ class GuardFiApiClient {
 
   /// `DELETE /auth/account` — irreversible; the token dies with the account.
   ///
-  /// Returns the cascade summary (`deleted`, `cloudinary`, `sockets`, `audit`).
+  /// Returns the cascade summary (`deleted`, `cloudinary`, `localScreenshots`,
+  /// `sockets`, `audit`).
   /// Ask the user to confirm twice before calling this.
   Future<Map<String, dynamic>> deleteAccount() async {
     final data = await _request('DELETE', '/auth/account');
@@ -1113,7 +1118,8 @@ class GuardFiApiClient {
   }) async {
     final body = <String, dynamic>{
       if (name != null) 'name': name,
-      if (clearRelation) 'relation': null else if (relation != null) 'relation': relation,
+      if (clearRelation) 'relation': null,
+      if (!clearRelation && relation != null) 'relation': relation,
       if (isPrimary != null) 'isPrimary': isPrimary,
       if (fcmToken != null && fcmToken.trim().isNotEmpty) 'fcmToken': fcmToken.trim(),
     };
@@ -1257,6 +1263,17 @@ class GuardFiApiClient {
     String filename = 'screenshot.jpg',
     String? text,
   }) async {
+    const allowed = <String>{'image/jpeg', 'image/png', 'image/webp'};
+    if (!allowed.contains(mimeType)) {
+      // Fail here rather than sending a part the server's MIME allow-list will
+      // reject with a less obvious message.
+      throw ArgumentError.value(
+        mimeType,
+        'mimeType',
+        'must be one of ${allowed.join(', ')}',
+      );
+    }
+
     final data = await _multipart(
       '/scam-buster/analyze',
       bytes: bytes,
