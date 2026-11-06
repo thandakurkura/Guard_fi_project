@@ -37,7 +37,7 @@ const E164_REGEX = /^\+[1-9]\d{7,14}$/;
 /** Separators people actually type: spaces, dashes, dots, parentheses, slashes. */
 const SEPARATORS_REGEX = /[\s\-.()/\u2010-\u2015]/g;
 
-/**
+/** 
  * @param {unknown} value raw user input
  * @returns {string|null} E.164 number, or null when the input is not a number
  */
